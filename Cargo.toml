@@ -1,0 +1,9 @@
+[package]
+name = "secret_handshake"
+version = "0.1.0"
+authors = ["SH <github@hertenberger.bayern>"]
+
+[dependencies]
+base64 = "*"
+clippy = {version = "*", optional = true}
+sodiumoxide = "*"
