@@ -94,10 +94,9 @@ pub fn verify_challenge(mut state: State, challenge: &[u8; 64]) -> State {
     if !verify(&mac, &remote_pk, &state.app_key) {
         return state;
     }
-    {
-        match state.local {
-            Some(ref l) => match state.remote {
-                Some(ref mut r) => {
+
+    if let Some(ref l) = state.local {
+        if let Some(ref mut r) = state.remote {
                     r.kx_pk = PublicKey::from_slice(remote_pk).unwrap();
                     r.app_mac = mac;
                     state.secret = scalarmult(
@@ -106,11 +105,7 @@ pub fn verify_challenge(mut state: State, challenge: &[u8; 64]) -> State {
                     ).unwrap();
                     state.shash = sha256::hash(state.secret.as_ref());
                 }
-                None => {}
-            },
-            None => {}
         }
-    }
     state
 }
 
