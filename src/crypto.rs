@@ -1,21 +1,25 @@
 use sodiumoxide::crypto::auth::{authenticate, verify, Key, Tag};
 use sodiumoxide::crypto::hash::sha256;
-use sodiumoxide::crypto::scalarmult::curve25519::{scalarmult, GroupElement, Scalar};
+use sodiumoxide::crypto::scalarmult::curve25519::{
+    scalarmult, GroupElement, Scalar, GROUPELEMENTBYTES,
+};
 use sodiumoxide::crypto::sign::{gen_keypair, PublicKey, SecretKey};
 
 pub trait AsRef {
     fn as_ref(&self) -> &[u8];
 }
 
+// impl Copy for SecretKey {}
+
 impl AsRef for SecretKey {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        &self[..]
     }
 }
 
 impl AsRef for GroupElement {
     fn as_ref(&self) -> &[u8] {
-        &self.0
+        &self[..]
     }
 }
 
@@ -37,7 +41,7 @@ pub struct Sbox {
 
 #[derive(Debug, Clone)]
 pub struct State {
-    pub locale: Option<Box<Sbox>>,
+    pub local: Option<Box<Sbox>>,
     pub remote: Option<Box<Sbox>>,
     pub secret: GroupElement,
     pub shash: sha256::Digest,
@@ -64,14 +68,14 @@ pub fn initialize(state: &mut State) -> State {
         secret_key: sk.clone(),
         app_mac: authenticate(pk.as_ref(), &state.app_key),
     };
-    state.locale = Option::Some(Box::new(l));
+    state.local = Option::Some(Box::new(l));
     state.clone()
 }
 
 pub fn create_challenge(state: &State) -> [u8; CHALLENGE_LENGTH] {
     let mut c: [u8; CHALLENGE_LENGTH] = [0; CHALLENGE_LENGTH];
 
-    match state.locale {
+    match state.local {
         Some(ref l) => {
             c[0..32].clone_from_slice(&l.app_mac.as_ref()[0..32]);
             c[32..64].clone_from_slice(&l.kx_pk.as_ref()[0..32]);
@@ -81,17 +85,17 @@ pub fn create_challenge(state: &State) -> [u8; CHALLENGE_LENGTH] {
     }
 }
 
-pub fn verify_challenge(mut state: State, challenge: &[u8; 64]) -> Option<State> {
+pub fn verify_challenge(mut state: State, challenge: &[u8; 64]) -> State {
     assert_length(challenge, "challenge", CHALLENGE_LENGTH);
 
     let mac = Tag::from_slice(&challenge[0..32]).unwrap();
     let remote_pk = &challenge[32..64];
 
     if !verify(&mac, &remote_pk, &state.app_key) {
-        return None;
+        return state;
     }
     {
-        match state.locale {
+        match state.local {
             Some(ref l) => match state.remote {
                 Some(ref mut r) => {
                     r.kx_pk = PublicKey::from_slice(remote_pk).unwrap();
@@ -102,15 +106,20 @@ pub fn verify_challenge(mut state: State, challenge: &[u8; 64]) -> Option<State>
                     ).unwrap();
                     state.shash = sha256::hash(state.secret.as_ref());
                 }
-                None => {
-                    return None;
-                }
+                None => {}
             },
-            None => {
-                return None;
-            }
+            None => {}
         }
     }
+    state
+}
+
+pub fn clean(mut state: State) -> Option<State> {
+    let empty: [u8; GROUPELEMENTBYTES] = [0; GROUPELEMENTBYTES];
+
+    state.shash = sha256::hash(b"");
+
+    state.secret = GroupElement(empty);
     Some(state)
 }
 
@@ -138,7 +147,7 @@ fn initalize_test() {
     let app_key = "1KHLiKZvAvjbY1ziZEHMXawbCEIM6qwjCDm3VYRan/s=";
 
     let mut s: State = State {
-        locale: None,
+        local: None,
         remote: None,
         app_key: Key::from_slice(&base64::decode(&app_key).unwrap()).unwrap(),
         secret: GroupElement::from_slice(&[0; 32]).unwrap(),
@@ -147,7 +156,7 @@ fn initalize_test() {
 
     s = initialize(&mut s);
 
-    match s.locale {
+    match s.local {
         Some(ref l) => {
             assert_length(l.kx_pk.as_ref(), "pk", 32);
         }
@@ -158,9 +167,9 @@ fn initalize_test() {
 
     let (pk, sk) = gen_keypair();
     let r: Sbox = Sbox {
-        kx_pk: pk.clone(),
+        kx_pk: pk,
         kx_sk: sk.clone(),
-        public_key: pk.clone(),
+        public_key: pk,
         secret_key: sk.clone(),
         app_mac: authenticate(pk.as_ref(), &s.app_key),
     };
@@ -168,9 +177,7 @@ fn initalize_test() {
     s.remote = Some(Box::new(r));
 
     let ch = create_challenge(&s);
-    match verify_challenge(s, &ch) {
-        Some(_) => {}
-        None => assert!(false),
-    }
     assert!(ch.cmp(&[0; CHALLENGE_LENGTH]) != Ordering::Equal);
+    s = verify_challenge(s, &ch);
+    println!("{:?}", s.app_key);
 }
